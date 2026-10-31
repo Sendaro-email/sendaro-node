@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Import and require the built package
+        run: |
+          node --input-type=module -e "import { Sendaro } from './dist/index.js'; new Sendaro('rf_ci');"
+          node -e "const { Sendaro } = require('./dist/cjs/index.js'); new Sendaro('rf_ci');"
