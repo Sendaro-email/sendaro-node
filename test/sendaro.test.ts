@@ -284,4 +284,65 @@ describe("Sendaro SDK", () => {
       code: "unexpected_error",
     });
   });
+
+  it("sends headers and unsubscribe only when given", async () => {
+    const calls = installFetch(202, { id: "00000000-0000-4000-8000-000000000000", object: "email" });
+    const client = new Sendaro(apiKey);
+    await client.send({
+      from: "a@b.test",
+      to: "c@d.test",
+      subject: "s",
+      html: '<a href="{{unsubscribe_url}}">Unsubscribe</a>',
+      headers: { "X-Campaign": "nov" },
+      unsubscribe: true,
+    });
+    await client.send({ from: "a@b.test", to: "c@d.test", subject: "s", text: "t" });
+    expect(JSON.parse(calls[0]!.body!)).toMatchObject({
+      headers: { "X-Campaign": "nov" },
+      unsubscribe: true,
+    });
+    const plain = JSON.parse(calls[1]!.body!);
+    expect(plain).not.toHaveProperty("headers");
+    expect(plain).not.toHaveProperty("unsubscribe");
+  });
+
+  it("adds, lists and removes suppressions", async () => {
+    const entry = {
+      id: "11111111-1111-4111-8111-111111111111",
+      email: "user@example.com",
+      reason: "unsubscribe",
+      sourceRef: null,
+      createdAt: "2026-11-01T09:00:00.000Z",
+    };
+    const client = new Sendaro(apiKey);
+
+    let calls = installFetch(201, { entry, created: true });
+    const added = await client.addSuppression({ email: "user@example.com", reason: "unsubscribe" });
+    expect(added.created).toBe(true);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(`${SENDARO_DEFAULT_BASE_URL}/api/suppression`);
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ email: "user@example.com", reason: "unsubscribe" });
+    expect(calls[0]?.headers.get("authorization")).toBe(`Bearer ${apiKey}`);
+
+    calls = installFetch(200, { items: [entry], page: 1, pageSize: 25, total: 1 });
+    const list = await client.listSuppressions({ reason: "unsubscribe", pageSize: 25 });
+    expect(list.items[0]?.email).toBe("user@example.com");
+    expect(calls[0]?.url).toBe(`${SENDARO_DEFAULT_BASE_URL}/api/suppression?reason=unsubscribe&pageSize=25`);
+
+    calls = installFetch(200, { items: [], page: 1, pageSize: 25, total: 0 });
+    await client.listSuppressions();
+    expect(calls[0]?.url).toBe(`${SENDARO_DEFAULT_BASE_URL}/api/suppression`);
+
+    calls = installFetch(200, { ok: true });
+    await client.removeSuppression("user+tag@example.com");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(`${SENDARO_DEFAULT_BASE_URL}/api/suppression?email=user%2Btag%40example.com`);
+  });
+
+  it("surfaces a locked spam complaint as a SendaroError", async () => {
+    installFetch(409, { error: "This address reported your email as spam, so it stays suppressed." });
+    await expect(new Sendaro(apiKey).removeSuppression("angry@example.com")).rejects.toMatchObject({
+      status: 409,
+    });
+  });
 });

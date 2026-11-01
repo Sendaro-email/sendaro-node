@@ -1,6 +1,6 @@
 # sendaro
 
-Official Node.js and TypeScript SDK for [Sendaro](https://usesendaro.com), the transactional email API.
+Official Node.js and TypeScript SDK for [Sendaro](https://sendaro.email), the transactional email API.
 
 ```bash
 npm install sendaro
@@ -10,7 +10,7 @@ Requires Node.js 20 or later. Works with `import` and `require`.
 
 ## Quick start
 
-1. In the Sendaro dashboard, verify a sending domain and create an API key.
+1. [Create a free account](https://sendaro.email/register), verify a sending domain, and create an API key.
 2. Put the key in your app's `.env`:
 
    ```bash
@@ -65,6 +65,32 @@ At least one of `html` or `text` is required. `send` resolves when the message i
 
 **Idempotency:** the same `idempotencyKey` with the same body returns the original id for 24 hours instead of sending twice. A different body with that key in the window throws a 409 error.
 
+## Unsubscribe links
+
+For newsletters and other bulk mail, pass `unsubscribe: true`. Sendaro adds one-click `List-Unsubscribe` headers and replaces `{{unsubscribe_url}}` in your `html` or `text` with a hosted unsubscribe link:
+
+```ts
+await sendaro.send({
+  from: "Acme <news@updates.acme.com>",
+  to: "user@example.com",
+  subject: "What's new in November",
+  html: '<p>Here is what shipped.</p><a href="{{unsubscribe_url}}">Unsubscribe</a>',
+  unsubscribe: true,
+});
+```
+
+Someone who unsubscribes is added to your suppression list, and the `email.unsubscribed` webhook fires. To use your own unsubscribe URL instead, pass it in `headers` (`List-Unsubscribe` and `List-Unsubscribe-Post`).
+
+## Suppression list
+
+Sendaro never sends to a suppressed address. With an API key that has the suppression scopes, you can sync opt-outs from your own app:
+
+```ts
+await sendaro.addSuppression({ email: "user@example.com", reason: "unsubscribe" });
+const { items } = await sendaro.listSuppressions({ reason: "unsubscribe" });
+await sendaro.removeSuppression("user@example.com"); // only if they opted back in
+```
+
 ## Reading messages
 
 ```ts
@@ -72,7 +98,7 @@ const email = await sendaro.get(id);   // status, body, and event history
 const page = await sendaro.list({ limit: 50 }); // most recent, up to 100
 ```
 
-`email.status` is one of `queued`, `sending`, `sent`, `delivered`, `bounced`, `failed`, `cancelled`, `delayed`, `complained`, or `rejected`. `sent` means the provider accepted the message. `delivered` appears only after a delivery event.
+`email.status` is one of `queued`, `sending`, `sent`, `delivered`, `bounced`, `failed`, `cancelled`, `delayed`, `complained`, or `rejected`. `sent` means our mail servers accepted the message. `delivered` means the recipient's mail server accepted it. See [statuses](https://sendaro.email/docs#statuses).
 
 ## Errors
 
@@ -90,6 +116,8 @@ try {
 }
 ```
 
+`POST /api/emails` allows 60 requests per 60 seconds per API key and 120 per workspace. Over the limit, `send` throws a `SendaroError` with status `429` and nothing is stored, so it is safe to retry with the same `idempotencyKey`.
+
 ## Verifying webhooks
 
 Sendaro signs webhook deliveries with your endpoint's secret. Verify the raw request body before trusting it:
@@ -105,12 +133,12 @@ const ok = verifyWebhook(
 );
 ```
 
-It returns `false` for a missing or wrong signature, a changed body, or a timestamp more than 5 minutes from now.
+It returns `false` for a missing or wrong signature, a changed body, or a timestamp more than 5 minutes from now. See [webhooks](https://sendaro.email/docs#webhooks) for the events and payload.
 
 ## Links
 
-- [Documentation](https://usesendaro.com/docs)
-- [Dashboard](https://usesendaro.com)
+- [Documentation](https://sendaro.email/docs)
+- [Sign in](https://sendaro.email/login)
 - [Source and issues](https://github.com/Sendaro-email/sendaro-node)
 
 ## License
