@@ -1,7 +1,8 @@
 /**
  * Sendaro SDK: a TypeScript client for the Sendaro transactional email API.
- * Covers POST /api/emails, GET /api/emails, GET /api/emails/{id}, and
- * `verifyWebhook` for signed webhook deliveries.
+ * Covers POST /api/emails, GET /api/emails, GET /api/emails/{id}, the
+ * suppression list (/api/suppression), and `verifyWebhook` for signed
+ * webhook deliveries.
  *
  * Field names follow the API. There is no batch send, attachment upload, or
  * separate schedule method.
@@ -57,7 +58,56 @@ export type SendEmailInput = {
   text?: string;
   reply_to?: string;
   scheduled_at?: string;
+  /**
+   * Extra headers: List-Unsubscribe, List-Unsubscribe-Post, In-Reply-To,
+   * References and X- headers. At most 20, single-line values.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Add Sendaro's one-click unsubscribe headers and replace
+   * `{{unsubscribe_url}}` in html and text with the unsubscribe page link.
+   */
+  unsubscribe?: boolean;
 };
+
+export type SuppressionReason =
+  | "unsubscribe"
+  | "hard_bounce"
+  | "abuse"
+  | "manual"
+  | "admin";
+
+export type Suppression = {
+  id: string;
+  email: string;
+  reason: SuppressionReason;
+  sourceRef: string | null;
+  createdAt: string;
+};
+
+export type SuppressionList = {
+  items: Suppression[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+export type ListSuppressionsQuery = {
+  q?: string;
+  reason?: SuppressionReason;
+  page?: number;
+  pageSize?: number;
+};
+
+/** Customer webhook event names. */
+export type WebhookEventType =
+  | "email.sent"
+  | "email.delivered"
+  | "email.bounced"
+  | "email.complained"
+  | "email.rejected"
+  | "email.failed"
+  | "email.unsubscribed";
 
 export type SendEmailOptions = {
   idempotencyKey?: string;
@@ -222,6 +272,8 @@ function sendPayload(input: SendEmailInput): SendEmailInput {
   if (input.text !== undefined) body.text = input.text;
   if (input.reply_to !== undefined) body.reply_to = input.reply_to;
   if (input.scheduled_at !== undefined) body.scheduled_at = input.scheduled_at;
+  if (input.headers !== undefined) body.headers = input.headers;
+  if (input.unsubscribe !== undefined) body.unsubscribe = input.unsubscribe;
   return body;
 }
 
@@ -297,8 +349,41 @@ export class Sendaro {
     return this.request<EmailList>("GET", `/api/emails?${params.toString()}`);
   }
 
+  /** GET /api/suppression. Needs the suppressions:read scope. */
+  async listSuppressions(query?: ListSuppressionsQuery): Promise<SuppressionList> {
+    const params = new URLSearchParams();
+    if (query?.q !== undefined) params.set("q", query.q);
+    if (query?.reason !== undefined) params.set("reason", query.reason);
+    if (query?.page !== undefined) params.set("page", String(query.page));
+    if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+    const qs = params.toString();
+    return this.request<SuppressionList>("GET", `/api/suppression${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * POST /api/suppression. Needs suppressions:write. Use reason "unsubscribe"
+   * to sync opt-outs from your app. `created` is false when the address was
+   * already suppressed.
+   */
+  async addSuppression(input: {
+    email: string;
+    reason: SuppressionReason;
+    sourceRef?: string;
+  }): Promise<{ entry: Suppression; created: boolean }> {
+    return this.request("POST", "/api/suppression", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** DELETE /api/suppression?email=. Needs suppressions:write. Spam complaints can't be removed. */
+  async removeSuppression(email: string): Promise<{ ok: true }> {
+    const params = new URLSearchParams({ email });
+    return this.request("DELETE", `/api/suppression?${params.toString()}`);
+  }
+
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     init?: { headers?: Record<string, string>; body?: string; signal?: AbortSignal },
   ): Promise<T> {

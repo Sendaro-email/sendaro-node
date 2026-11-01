@@ -1,10 +1,10 @@
 {
   "name": "sendaro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official Node.js and TypeScript SDK for Sendaro, the transactional email API",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://usesendaro.com/docs#sending",
+  "homepage": "https://sendaro.email/docs#sending",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Sendaro-email/sendaro-node.git"
