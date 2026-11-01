@@ -1,0 +1,79 @@
+name: Publish
+
+# Publishes to npm whenever main has a package.json version that npm doesn't
+# have yet, then tags it and creates a GitHub release. To release: bump
+# "version" in package.json in a pull request and merge it.
+#
+# Uses npm trusted publishing (OIDC), so no npm token is stored anywhere.
+# npm side: package settings → Trusted Publisher → GitHub Actions, with
+# organization Sendaro-email, repository sendaro-node, workflow publish.yml.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag and GitHub release
+      id-token: write # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Check whether this version is already on npm
+        id: version
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} is already published. Nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Publishing ${name}@${version}."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - if: steps.version.outputs.publish == 'true'
+        run: npm install -g npm@latest
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm ci
+
+      - if: steps.version.outputs.publish == 'true'
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+          node --input-type=module -e "import { Sendaro } from './dist/index.js'; new Sendaro('rf_ci');"
+          node -e "const { Sendaro } = require('./dist/cjs/index.js'); new Sendaro('rf_ci');"
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm publish --access public
+
+      - name: Tag and create the GitHub release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
